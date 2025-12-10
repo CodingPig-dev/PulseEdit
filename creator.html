@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>ED3 Web Tool: MP3 + JSON kombinieren & lesen</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    textarea { width: 100%; height: 250px; }
+    #main { max-width: 700px; margin: auto; }
+    button { margin: 0.4em 0.5em 0.4em 0;}
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<div id="main">
+  <h1>ED3 Web Tool</h1>
+  <button onclick="showCreate()">Create .ed3 from MP3</button>
+  <button onclick="showOpen()">Open .ed3 file</button>
+
+  <div id="createSection" class="hidden">
+    <h2>Create .ed3 from MP3</h2>
+    <input type="file" id="mp3Input" accept=".mp3,audio/mpeg"><br>
+    <label for="jsonInput">Paste JSON to embed:</label><br>
+    <textarea id="jsonInput" placeholder="{}"></textarea>
+    <br>
+    <button onclick="createED3()">Create & Download .ed3</button>
+    <button onclick="hideAll()">Cancel</button>
+  </div>
+
+  <div id="openSection" class="hidden">
+    <h2>Open .ed3 file</h2>
+    <input type="file" id="ed3Input" accept=".ed3,application/octet-stream"><br>
+    <button onclick="openED3()">Open</button>
+    <button onclick="hideAll()">Cancel</button>
+    <div id="ed3Result"></div>
+  </div>
+</div>
+
+<script>
+const MARKER = "\n--ED3-JSON-START--\n";
+
+function hideAll() {
+  document.getElementById('createSection').classList.add('hidden');
+  document.getElementById('openSection').classList.add('hidden');
+}
+
+function showCreate() {
+  hideAll();
+  document.getElementById('mp3Input').value = "";
+  document.getElementById('jsonInput').value = "";
+  document.getElementById('createSection').classList.remove('hidden');
+}
+
+function showOpen() {
+  hideAll();
+  document.getElementById('ed3Input').value = "";
+  document.getElementById('ed3Result').innerHTML = "";
+  document.getElementById('openSection').classList.remove('hidden');
+}
+
+
+function looksLikeJson(str) {
+  try {
+    const t = str.trim();
+    return (t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"));
+  } catch (e) { return false; }
+}
+
+function createED3() {
+  const mp3File = document.getElementById('mp3Input').files[0];
+  const json = document.getElementById('jsonInput').value.trim();
+  if (!mp3File) { alert('No MP3 file selected.'); return; }
+  if (!json) { alert('No JSON provided.'); return; }
+  if (!looksLikeJson(json)) {
+    if (!confirm("The text does not look like JSON. Continue?")) return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const mp3Array = new Uint8Array(e.target.result);
+    const markerArray = new TextEncoder().encode(MARKER);
+    const jsonArray = new TextEncoder().encode(json);
+    const outArray = new Uint8Array(mp3Array.length + markerArray.length + jsonArray.length);
+    outArray.set(mp3Array, 0);
+    outArray.set(markerArray, mp3Array.length);
+    outArray.set(jsonArray, mp3Array.length + markerArray.length);
+    const blob = new Blob([outArray], {type: "application/octet-stream"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = mp3File.name + ".ed3";
+    a.click();
+    URL.revokeObjectURL(url);
+    alert("Created: " + a.download);
+  };
+  reader.readAsArrayBuffer(mp3File);
+}
+
+function openED3() {
+  const file = document.getElementById('ed3Input').files[0];
+  if (!file) { alert('No .ed3 file selected.'); return; }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const allBytes = new Uint8Array(e.target.result);
+    const markerBytes = new TextEncoder().encode(MARKER);
+    const idx = indexOfSequence(allBytes, markerBytes);
+    let mp3Blob, jsonString = null;
+
+    if (idx >= 0) {
+      mp3Blob = new Blob([allBytes.slice(0, idx)], {type: "audio/mpeg"});
+      const jsonBytes = allBytes.slice(idx + markerBytes.length);
+      jsonString = new TextDecoder("utf-8").decode(jsonBytes);
+    } else {
+      mp3Blob = new Blob([allBytes], {type: "audio/mpeg"});
+    }
+
+    let html = `<p><strong>MP3 Preview:</strong></p><audio controls src="${URL.createObjectURL(mp3Blob)}"></audio>`;
+    if (jsonString !== null && jsonString.trim()) {
+      html += `<h3>Embedded JSON</h3>
+        <textarea id="jsonPreview" readonly>${jsonString.trim()}</textarea><br>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('jsonPreview').value);alert('JSON copied!')">Copy to clipboard</button>`;
+    } else {
+      html += `<p><em>No embedded JSON found in this .ed3 file.</em></p>`;
+    }
+    document.getElementById('ed3Result').innerHTML = html;
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function indexOfSequence(data, pattern) {
+  outer: for (let i = 0; i <= data.length - pattern.length; i++) {
+    for (let j = 0; j < pattern.length; j++) {
+      if (data[i + j] !== pattern[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+</script>
+</body>
+</html>
